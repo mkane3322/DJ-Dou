@@ -1,0 +1,53 @@
+* {
+    background-color: black;
+    font-family: "Comfortaa";
+    color: white;
+}
+.title {
+    display: flex;
+    justify-content: center;
+    text-align: center;
+    font-size: 28px;
+}
+.vinylInfo {
+    text-align: center;
+    font-size: 12px;
+}
+.vinylContainer {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+.albumCover {
+    border: 1px solid white;
+    width: 500px;
+    height: 500px;
+}
+.vinyl{
+    background: radial-gradient(black, gray 10%, lightgray 100%);
+    width: 500px;
+    height: 500px;
+    border-radius: 100%;
+    margin-left: 10px;
+    animation: spinning 5s infinite;
+}
+.controlPanel {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    border: 1px solid red;
+}
+.track {
+    width: 700px;
+    height: 300px;
+    margin-top: 100px;
+    background-color: lightgray;
+}
+@keyframes spinning {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: (360deg);
+    }
+}
