@@ -1,0 +1,16 @@
+{
+  "name": "dj-dou",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DJ Dou — SoundDNA music fingerprinting app",
+  "scripts": {
+    "dev:backend":  "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm start",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install",
+    "build:frontend": "cd frontend && npm run build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

@@ -1,0 +1,73 @@
+/*
+ * DJ Dou — CSS Custom Properties (Design Tokens)
+ *
+ * These are re-exported here as a standalone file for tools that need
+ * direct access to tokens (e.g. Storybook, CSS-in-JS extraction).
+ * The canonical source is global.css :root block.
+ */
+
+:root {
+  /* ── Color palette ─────────────────────────────────────────────────────── */
+  --bg-base:        #08070f;
+  --bg-surface:     #0f0d1a;
+  --bg-raised:      #17142b;
+  --bg-overlay:     #1f1b38;
+
+  --accent-primary: #a855f7;
+  --accent-hot:     #f472b6;
+  --accent-cyan:    #22d3ee;
+  --accent-lime:    #a3e635;
+  --accent-orange:  #fb923c;
+  --accent-green:   #34d399;
+
+  --text-primary:   #f1eeff;
+  --text-secondary: #9d8fc4;
+  --text-muted:     #5a5178;
+
+  --border:         rgba(168, 85, 247, 0.15);
+  --border-bright:  rgba(168, 85, 247, 0.40);
+
+  /* ── Typography ────────────────────────────────────────────────────────── */
+  --font-display: 'Syne', sans-serif;
+  --font-mono:    'DM Mono', monospace;
+
+  /* ── Spacing scale (4px base) ──────────────────────────────────────────── */
+  --space-1:   0.25rem;   /*  4px */
+  --space-2:   0.5rem;    /*  8px */
+  --space-3:   0.75rem;   /* 12px */
+  --space-4:   1rem;      /* 16px */
+  --space-5:   1.25rem;   /* 20px */
+  --space-6:   1.5rem;    /* 24px */
+  --space-8:   2rem;      /* 32px */
+  --space-10:  2.5rem;    /* 40px */
+  --space-12:  3rem;      /* 48px */
+  --space-16:  4rem;      /* 64px */
+  --space-20:  5rem;      /* 80px */
+
+  /* ── Border radius ─────────────────────────────────────────────────────── */
+  --radius-sm:   6px;
+  --radius-md:   12px;
+  --radius-lg:   20px;
+  --radius-xl:   28px;
+  --radius-full: 9999px;
+
+  /* ── Transitions ───────────────────────────────────────────────────────── */
+  --transition-fast: 150ms ease;
+  --transition-base: 250ms ease;
+  --transition-slow: 400ms cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* ── Shadows ───────────────────────────────────────────────────────────── */
+  --shadow-sm:  0 2px 8px rgba(0,0,0,0.3);
+  --shadow-md:  0 8px 24px rgba(0,0,0,0.4);
+  --shadow-lg:  0 20px 48px rgba(0,0,0,0.5);
+  --shadow-glow-purple: 0 0 30px rgba(168,85,247,0.4);
+  --shadow-glow-pink:   0 0 30px rgba(244,114,182,0.4);
+  --shadow-glow-cyan:   0 0 30px rgba(34,211,238,0.4);
+
+  /* ── Z-index scale ─────────────────────────────────────────────────────── */
+  --z-base:    1;
+  --z-raised:  10;
+  --z-overlay: 50;
+  --z-modal:   100;
+  --z-toast:   200;
+}
