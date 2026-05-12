@@ -1,0 +1,76 @@
+:root {
+  --bg-base:        #08070f;
+  --bg-surface:     #0f0d1a;
+  --bg-raised:      #17142b;
+  --bg-overlay:     #1f1b38;
+  --accent:         #a855f7;
+  --accent-hot:     #f472b6;
+  --accent-cyan:    #22d3ee;
+  --accent-lime:    #a3e635;
+  --text-primary:   #f1eeff;
+  --text-secondary: #9d8fc4;
+  --text-muted:     #5a5178;
+  --border:         rgba(168,85,247,0.15);
+  --border-bright:  rgba(168,85,247,0.4);
+  --font:           'Syne', sans-serif;
+  --mono:           'DM Mono', monospace;
+  --radius:         12px;
+  --radius-sm:      6px;
+  --radius-full:    9999px;
+  --ease:           cubic-bezier(0.16,1,0.3,1);
+}
+
+*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: var(--font);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(168,85,247,0.12) 0%, transparent 70%);
+  pointer-events: none; z-index: 0;
+}
+a { color: inherit; text-decoration: none; }
+img { display: block; max-width: 100%; }
+button { font-family: inherit; cursor: pointer; border: none; background: none; }
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: var(--bg-base); }
+::-webkit-scrollbar-thumb { background: var(--bg-overlay); border-radius: 3px; }
+
+.container { max-width: 1200px; margin: 0 auto; padding: 0 1.5rem; }
+.glass {
+  background: rgba(15,13,26,0.7);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.grad {
+  background: linear-gradient(135deg, var(--accent), var(--accent-hot));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+@keyframes fadeUp  { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:translateY(0); } }
+@keyframes spin    { to { transform:rotate(360deg); } }
+@keyframes waveBar { 0%,100% { transform:scaleY(0.3); } 50% { transform:scaleY(1); } }
+@keyframes shimmer { 0% { background-position:-200% 0; } 100% { background-position:200% 0; } }
+
+.fu  { animation: fadeUp 0.5s var(--ease) both; }
+.fu1 { animation: fadeUp 0.5s 0.08s var(--ease) both; }
+.fu2 { animation: fadeUp 0.5s 0.16s var(--ease) both; }
+.fu3 { animation: fadeUp 0.5s 0.24s var(--ease) both; }
+.fu4 { animation: fadeUp 0.5s 0.32s var(--ease) both; }
+
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-overlay) 25%, var(--bg-raised) 50%, var(--bg-overlay) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: var(--radius);
+}
