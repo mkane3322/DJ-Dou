@@ -102,6 +102,7 @@ router.post("/dna/compute", requireAuth, async (req, res) => {
       chartData: svc.buildChartData(dnaVector),
     });
   } catch (err) {
+    console.error("DNA compute error:", err.response?.data || err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -309,19 +310,25 @@ router.post("/seeds", requireAuth, async (req, res) => {
   if (!spotifyId) return res.status(400).json({ error: "spotifyId required" });
   if ((await Seed.countDocuments({ userId: req.user._id })) >= 10)
     return res.status(400).json({ error: "Max 10 seeds" });
+
   let track = await Track.findOne({ spotifyId });
   if (!track) {
     try {
       const client = await svc.getSpotifyClient(req.user);
-      const [t, af] = await Promise.all([
-        svc.spotifyGet(client, `/tracks/${spotifyId}`),
-        svc.spotifyGet(client, `/audio-features/${spotifyId}`),
-      ]);
-      track = await svc.upsertTrack(t, af);
+      // Only fetch basic track info — skip audio features
+      const t = await svc.spotifyGet(client, `/tracks/${spotifyId}`);
+      const formatted = svc.formatTrack(t);
+      track = await Track.findOneAndUpdate(
+        { spotifyId: formatted.spotifyId },
+        { ...formatted, cachedAt: new Date() },
+        { upsert: true, new: true },
+      );
     } catch (err) {
+      console.error("Seed fetch error:", err.response?.data || err.message);
       return res.status(502).json({ error: err.message });
     }
   }
+
   const seed = await Seed.findOneAndUpdate(
     { userId: req.user._id, trackId: track._id },
     { userId: req.user._id, trackId: track._id, addedAt: new Date() },
