@@ -152,10 +152,23 @@ async function computeDNAVector(user, client) {
     }
   }
   const unique = Array.from(map.values());
-  const afs = await getAudioFeatures(
-    client,
-    unique.map(({ t }) => t.id),
-  );
+  let afs = [];
+  try {
+    afs = await getAudioFeatures(
+      client,
+      unique.map(({ t }) => t.id),
+    );
+  } catch (err) {
+    console.warn(
+      "Audio features blocked by Spotify (403) — using neutral DNA vector",
+    );
+    return new Array(13).fill(0.5);
+  }
+  const validAfs = afs.filter(Boolean);
+  if (!validAfs.length) {
+    console.warn("No audio features returned — using neutral DNA vector");
+    return new Array(13).fill(0.5);
+  }
   const totalW = unique.reduce((s, { w }) => s + w, 0);
   const sums = new Array(13).fill(0);
   afs.forEach((af, i) => {
@@ -218,20 +231,36 @@ async function findSimilarTracks(
   dnaVector,
   { limit = 20, excludeIds = [], featureFilters = {} } = {},
 ) {
-  const query = { featureVector: { $exists: true, $not: { $size: 0 } } };
+  const query = {};
+  const tracksWithVectors = await Track.countDocuments({
+    featureVector: { $exists: true, $not: { $size: 0 } },
+  });
+  if (tracksWithVectors > 0) {
+    query.featureVector = { $exists: true, $not: { $size: 0 } };
+  }
   if (excludeIds.length) query._id = { $nin: excludeIds };
   for (const [f, [mn, mx]] of Object.entries(featureFilters)) {
     query[`audioFeatures.${f}`] = { $gte: mn, $lte: mx };
   }
   const candidates = await Track.find(query).limit(10000).lean();
-  return candidates
-    .map((t) => ({
-      track: t,
-      similarityScore: cosineSimilarity(dnaVector, t.featureVector),
-    }))
-    .filter(({ similarityScore }) => !isNaN(similarityScore))
-    .sort((a, b) => b.similarityScore - a.similarityScore)
-    .slice(0, limit);
+  if (!candidates.length) return [];
+  if (tracksWithVectors > 0) {
+    return candidates
+      .map((t) => ({
+        track: t,
+        similarityScore: cosineSimilarity(dnaVector, t.featureVector),
+      }))
+      .filter(
+        ({ similarityScore }) => !isNaN(similarityScore) && similarityScore > 0,
+      )
+      .sort((a, b) => b.similarityScore - a.similarityScore)
+      .slice(0, limit);
+  } else {
+    return candidates
+      .sort(() => Math.random() - 0.5)
+      .slice(0, limit)
+      .map((track) => ({ track, similarityScore: 0.5 }));
+  }
 }
 function buildChartData(vec) {
   return [

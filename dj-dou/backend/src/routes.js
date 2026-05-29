@@ -127,16 +127,30 @@ router.get("/recommendations", requireAuth, async (req, res) => {
       limit,
       excludeIds: interacted.map((i) => i.trackId),
     });
-    if (!similar.length) return res.json([]);
-    const whyTexts = await Promise.all(
-      similar
-        .slice(0, 10)
-        .map(({ track, similarityScore }) =>
-          svc
-            .generateWhyText(track, similarityScore)
-            .catch(() => `${Math.round(similarityScore * 100)}% DNA match`),
-        ),
-    );
+    if (!similar.length) {
+      return res.json([]);
+    }
+    let whyTexts = similar
+      .slice(0, 10)
+      .map((s) => `${Math.round(s.similarityScore * 100)}% DNA match`);
+    if (
+      process.env.ANTHROPIC_API_KEY &&
+      process.env.ANTHROPIC_API_KEY !== "x"
+    ) {
+      try {
+        whyTexts = await Promise.all(
+          similar
+            .slice(0, 10)
+            .map(({ track, similarityScore }) =>
+              svc
+                .generateWhyText(track, similarityScore)
+                .catch(() => `${Math.round(similarityScore * 100)}% DNA match`),
+            ),
+        );
+      } catch (err) {
+        console.warn("Claude why-text generation failed:", err.message);
+      }
+    }
     await Recommendation.deleteMany({ userId: u._id });
     await Recommendation.insertMany(
       similar.map((s, i) => ({
@@ -152,6 +166,7 @@ router.get("/recommendations", requireAuth, async (req, res) => {
       .limit(limit);
     res.json(populated.map(fmtRec));
   } catch (err) {
+    console.error("Recommendations error:", err.response?.data || err.message);
     res.status(500).json({ error: err.message });
   }
 });
