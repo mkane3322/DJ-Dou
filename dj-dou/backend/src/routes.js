@@ -113,13 +113,20 @@ router.get("/recommendations", requireAuth, async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 20, 50);
   const refresh = req.query.refresh === "true";
   if (!refresh) {
-    const cached = await Recommendation.find({ userId: u._id })
-      .populate("trackId")
-      .sort({ similarityScore: -1 })
-      .limit(limit);
-    if (cached.length >= limit) return res.json(cached.map(fmtRec));
+    try {
+      const cached = await Recommendation.find({ userId: u._id })
+        .populate("trackId")
+        .sort({ similarityScore: -1 })
+        .limit(limit);
+      const validCached = cached.filter((r) => r.trackId != null);
+      if (validCached.length >= limit) return res.json(validCached.map(fmtRec));
+    } catch (err) {
+      // If cached lookup fails for any reason, just continue to fresh computation
+      console.warn("Cached recommendations lookup failed:", err.message);
+    }
   }
   try {
+    await Recommendation.deleteMany({ userId: u._id });
     const interacted = await Interaction.find({ userId: u._id }).select(
       "trackId",
     );
@@ -151,9 +158,10 @@ router.get("/recommendations", requireAuth, async (req, res) => {
         console.warn("Claude why-text generation failed:", err.message);
       }
     }
-    await Recommendation.deleteMany({ userId: u._id });
+    const validSimilar = similar.filter((s) => s.track && s.track._id);
+    if (!validSimilar.length) return res.json([]);
     await Recommendation.insertMany(
-      similar.map((s, i) => ({
+      validSimilar.map((s, i) => ({
         userId: u._id,
         trackId: s.track._id,
         similarityScore: s.similarityScore,
@@ -164,7 +172,8 @@ router.get("/recommendations", requireAuth, async (req, res) => {
       .populate("trackId")
       .sort({ similarityScore: -1 })
       .limit(limit);
-    res.json(populated.map(fmtRec));
+    const validPopulated = populated.filter((r) => r.trackId != null);
+    res.json(validPopulated.map(fmtRec));
   } catch (err) {
     console.error("Recommendations error:", err.response?.data || err.message);
     res.status(500).json({ error: err.message });
@@ -204,8 +213,9 @@ router.post(
             svc.generateWhyText(track, similarityScore).catch(() => ""),
           ),
       );
+      const validSimilar = similar.filter((s) => s.track && s.track._id);
       await Recommendation.insertMany(
-        similar.map((s, i) => ({
+        validSimilar.map((s, i) => ({
           userId: u._id,
           trackId: s.track._id,
           similarityScore: s.similarityScore,
@@ -217,8 +227,10 @@ router.post(
         userId: u._id,
         moodQuery: query,
       }).populate("trackId");
+
+      const validPopulated = populated.filter((r) => r.trackId != null);
       res.json({
-        results: populated.map(fmtRec),
+        results: validPopulated.map(fmtRec),
         parsedFilters: featureFilters,
       });
     } catch (err) {
@@ -228,6 +240,7 @@ router.post(
 );
 function fmtRec(rec) {
   const t = rec.trackId || rec.track;
+  if (!t) return null;
   return {
     id: rec._id,
     track: {
@@ -255,30 +268,34 @@ router.get("/tracks/search", requireAuth, async (req, res) => {
       type: "track",
       limit: parseInt(limit),
     });
-    const ids = tracks.items.map((t) => t.id);
-    svc
-      .getAudioFeatures(client, ids)
-      .then((afs) => {
-        tracks.items.forEach((t, i) => {
-          if (afs[i]) svc.upsertTrack(t, afs[i]).catch(() => null);
-        });
-      })
-      .catch(() => null);
+    tracks.items.forEach((t) => {
+      const formatted = svc.formatTrack(t);
+      Track.findOneAndUpdate(
+        { spotifyId: formatted.spotifyId },
+        { ...formatted, cachedAt: new Date() },
+        { upsert: true },
+      ).catch(() => null);
+    });
+
     res.json(tracks.items.map(svc.formatTrack));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 router.get("/tracks/:spotifyId", requireAuth, async (req, res) => {
-  const cached = await Track.findOne({ spotifyId: req.params.spotifyId });
-  if (cached) return res.json(cached);
   try {
+    const cached = await Track.findOne({ spotifyId: req.params.spotifyId });
+    if (cached) return res.json(cached);
+
     const client = await svc.getSpotifyClient(req.user);
-    const [t, af] = await Promise.all([
-      svc.spotifyGet(client, `/tracks/${req.params.spotifyId}`),
-      svc.spotifyGet(client, `/audio-features/${req.params.spotifyId}`),
-    ]);
-    res.json(await svc.upsertTrack(t, af));
+    const t = await svc.spotifyGet(client, `/tracks/${req.params.spotifyId}`);
+    const formatted = svc.formatTrack(t);
+    const saved = await Track.findOneAndUpdate(
+      { spotifyId: formatted.spotifyId },
+      { ...formatted, cachedAt: new Date() },
+      { upsert: true, new: true },
+    );
+    res.json(saved);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -330,7 +347,6 @@ router.post("/seeds", requireAuth, async (req, res) => {
   if (!track) {
     try {
       const client = await svc.getSpotifyClient(req.user);
-      // Only fetch basic track info — skip audio features
       const t = await svc.spotifyGet(client, `/tracks/${spotifyId}`);
       const formatted = svc.formatTrack(t);
       track = await Track.findOneAndUpdate(
@@ -343,7 +359,6 @@ router.post("/seeds", requireAuth, async (req, res) => {
       return res.status(502).json({ error: err.message });
     }
   }
-
   const seed = await Seed.findOneAndUpdate(
     { userId: req.user._id, trackId: track._id },
     { userId: req.user._id, trackId: track._id, addedAt: new Date() },
