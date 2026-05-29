@@ -276,7 +276,7 @@ function buildChartData(vec) {
 }
 async function claudeMessage(prompt, maxTokens = 300) {
   const msg = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
+    model: 'claude-3-5-sonnet-20241022',
     max_tokens: maxTokens,
     messages: [{ role: "user", content: prompt }],
   });
