@@ -7,7 +7,12 @@ const cron = require("node-cron");
 const rateLimit = require("express-rate-limit");
 const routes = require("./routes");
 const { User, Track } = require("./models");
-const { getSpotifyClient, spotifyGet, formatTrack } = require("./services");
+const {
+  getClient,
+  spotifyGet,
+  formatTrack,
+  upsertTrack,
+} = require("./services");
 const app = express();
 const PORT = process.env.PORT || 5000;
 app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
@@ -22,14 +27,22 @@ app.use((err, req, res, next) => {
     .status(err.status || 500)
     .json({ error: err.message || "Internal server error" });
 });
-const SEED_PLAYLISTS = [
-  "37i9dQZEVXbMDoHDwVN2tF", // Top 50 Global
-  "37i9dQZF1DXcBWIGoYBM5M", // Today's Top Hits
-  "37i9dQZF1DX4JAvHpjipBk", // New Music Friday
-  "37i9dQZF1DWXRqgorJj26U", // Rock Classics
-  "37i9dQZF1DX4dyzvuaRJ0n", // mint (electronic)
-  "37i9dQZF1DX0XUsuxWHRQd", // RapCaviar
-  "37i9dQZF1DX4sWSpwq3LiO", // Peaceful Piano
+const SEARCH_QUERIES = [
+  "top hits",
+  "hip hop",
+  "pop",
+  "rock",
+  "r&b",
+  "electronic",
+  "jazz",
+  "indie",
+  "latin",
+  "country",
+  "soul",
+  "metal",
+  "reggae",
+  "classical",
+  "funk",
 ];
 let indexing = false;
 async function runIndexer() {
@@ -41,33 +54,48 @@ async function runIndexer() {
       spotifyRefreshToken: { $exists: true },
     });
     if (!adminUser) {
-      console.log("[indexer] No users yet — skipping");
+      console.log("[indexer] No users yet");
       return;
     }
-    const client = await getSpotifyClient(adminUser);
+    const client = await getClient(adminUser);
     let total = 0;
-    for (const pid of SEED_PLAYLISTS) {
+    for (const q of SEARCH_QUERIES) {
       try {
-        const data = await spotifyGet(client, `/playlists/${pid}/tracks`, {
-          limit: 100,
-          fields: "items(track(id,name,artists,album,preview_url,popularity))",
+        const data = await spotifyGet(client, "/search", {
+          q,
+          type: "track",
+          limit: 50,
         });
-        const tracks = data.items.map((i) => i.track).filter((t) => t?.id);
+        const tracks = data.tracks?.items?.filter((t) => t?.id) || [];
+
+        // Try to get audio features for this batch — may 403 on restricted apps
+        let featureMap = new Map();
+        try {
+          const ids = tracks.map((t) => t.id);
+          const { audio_features } = await spotifyGet(
+            client,
+            "/audio-features",
+            { ids: ids.join(",") },
+          );
+          (audio_features || [])
+            .filter(Boolean)
+            .forEach((af) => featureMap.set(af.id, af));
+        } catch {
+          /* audio features not available — save basic info only */
+        }
+
         for (const t of tracks) {
-          const formatted = formatTrack(t);
-          await Track.findOneAndUpdate(
-            { spotifyId: formatted.spotifyId },
-            { ...formatted, cachedAt: new Date() },
-            { upsert: true },
-          ).catch(() => null);
+          const af = featureMap.get(t.id) || null;
+          await upsertTrack(t, af).catch(() => null);
           total++;
         }
-        await new Promise((r) => setTimeout(r, 300));
+
+        await new Promise((r) => setTimeout(r, 250));
       } catch (e) {
-        console.error(`[indexer] Playlist ${pid} failed:`, e.message);
+        console.error(`[indexer] Query "${q}" failed:`, e.message);
       }
     }
-    console.log(`[indexer] Done. Saved ${total} tracks to catalog.`);
+    console.log(`[indexer] Done. Indexed ${total} tracks.`);
   } catch (e) {
     console.error("[indexer] Fatal:", e.message);
   } finally {
@@ -80,21 +108,14 @@ mongoose
     console.log("MongoDB connected");
     app.listen(PORT, () => {
       console.log(`DJ Dou backend running on port ${PORT}`);
-
-      // Run indexer on startup if catalog is thin
       Track.countDocuments().then((n) => {
         console.log(`[indexer] Catalog has ${n} tracks`);
-        if (n < 100) {
-          console.log("[indexer] Catalog thin — running initial index now");
-          runIndexer();
-        }
+        if (n < 200) runIndexer();
       });
-
-      // Run nightly at 2am to keep catalog fresh
       cron.schedule("0 2 * * *", runIndexer, { timezone: "America/New_York" });
     });
   })
   .catch((err) => {
-    console.error("DB connection failed:", err);
+    console.error("DB failed:", err);
     process.exit(1);
   });

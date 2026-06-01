@@ -1,8 +1,6 @@
 const axios = require("axios");
-const Anthropic = require("@anthropic-ai/sdk");
 const { Track, FEATURE_ORDER } = require("./models");
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const FEATURE_RANGES = {
+const RANGES = {
   danceability: { min: 0, max: 1 },
   energy: { min: 0, max: 1 },
   key: { min: 0, max: 11 },
@@ -17,21 +15,13 @@ const FEATURE_RANGES = {
   duration_ms: { min: 30000, max: 600000 },
   time_signature: { min: 1, max: 7 },
 };
-function normalizeFeatures(af) {
-  const out = {};
-  for (const f of FEATURE_ORDER) {
-    const { min, max } = FEATURE_RANGES[f];
-    out[f] = (Math.max(min, Math.min(max, af[f] ?? 0)) - min) / (max - min);
-  }
-  return out;
-}
-function audioFeaturesToVector(af) {
+function toVector(af) {
   return FEATURE_ORDER.map((f) => {
-    const { min, max } = FEATURE_RANGES[f];
+    const { min, max } = RANGES[f];
     return (Math.max(min, Math.min(max, af[f] ?? 0)) - min) / (max - min);
   });
 }
-function cosineSimilarity(a, b) {
+function cosine(a, b) {
   if (!a?.length || !b?.length || a.length !== b.length) return 0;
   let dot = 0,
     magA = 0,
@@ -44,12 +34,61 @@ function cosineSimilarity(a, b) {
   const denom = Math.sqrt(magA) * Math.sqrt(magB);
   return denom === 0 ? 0 : dot / denom;
 }
+function buildDNASummary(vec) {
+  const [
+    dance,
+    energy,
+    ,
+    ,
+    ,
+    speech,
+    acoustic,
+    instrumental,
+    live,
+    valence,
+    tempo,
+  ] = vec;
+
+  const mood =
+    valence > 0.6
+      ? "uplifting and positive"
+      : valence > 0.4
+        ? "emotionally balanced"
+        : "introspective and moody";
+  const drive =
+    energy > 0.6
+      ? "high-energy"
+      : energy > 0.4
+        ? "mid-energy"
+        : "calm and relaxed";
+  const groove =
+    dance > 0.6
+      ? "highly danceable"
+      : dance > 0.4
+        ? "rhythmically engaging"
+        : "laid-back";
+  const sound =
+    acoustic > 0.6
+      ? "acoustic and organic"
+      : acoustic > 0.3
+        ? "a blend of acoustic and electronic"
+        : "electronic and produced";
+  const vocals =
+    instrumental > 0.6
+      ? "instrumental"
+      : speech > 0.5
+        ? "rap and spoken word"
+        : "vocal-forward";
+  const pace = tempo > 0.6 ? "fast-paced" : tempo > 0.4 ? "mid-tempo" : "slow";
+  const setting = live > 0.7 ? "with a live concert energy" : "studio-polished";
+
+  return `Your SoundDNA leans ${mood}, ${drive}, and ${groove}. You gravitate toward ${sound} tracks that are ${vocals} and ${pace} ${setting}.`;
+}
 const SCOPES = [
   "user-read-email",
   "user-read-private",
   "user-top-read",
   "user-read-recently-played",
-  "playlist-read-private",
 ].join(" ");
 function getAuthUrl() {
   const p = new URLSearchParams({
@@ -83,7 +122,7 @@ async function exchangeCode(code) {
     redirect_uri: process.env.SPOTIFY_REDIRECT_URI,
   });
 }
-async function getSpotifyClient(user) {
+async function getClient(user) {
   let token = user.spotifyAccessToken;
   if (user.tokenExpiresAt && new Date() >= user.tokenExpiresAt) {
     const r = await spotifyTokenRequest({
@@ -104,17 +143,6 @@ async function spotifyGet(client, path, params = {}) {
   const { data } = await client.get(path, { params });
   return data;
 }
-async function getAudioFeatures(client, ids) {
-  if (!ids.length) return [];
-  const results = [];
-  for (let i = 0; i < ids.length; i += 100) {
-    const d = await spotifyGet(client, "/audio-features", {
-      ids: ids.slice(i, i + 100).join(","),
-    });
-    results.push(...(d.audio_features || []));
-  }
-  return results.filter(Boolean);
-}
 function formatTrack(t) {
   return {
     spotifyId: t.id,
@@ -126,7 +154,7 @@ function formatTrack(t) {
     popularity: t.popularity || 0,
   };
 }
-async function computeDNAVector(user, client) {
+async function computeDNA(user, client) {
   const [short, medium, long] = await Promise.all([
     spotifyGet(client, "/me/top/tracks", {
       time_range: "short_term",
@@ -152,115 +180,99 @@ async function computeDNAVector(user, client) {
     }
   }
   const unique = Array.from(map.values());
-  let afs = [];
+  const ids = unique.map(({ t }) => t.id);
+  let featureMap = new Map();
   try {
-    afs = await getAudioFeatures(
-      client,
-      unique.map(({ t }) => t.id),
-    );
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += 100)
+      chunks.push(ids.slice(i, i + 100));
+    for (const chunk of chunks) {
+      const { audio_features } = await spotifyGet(client, "/audio-features", {
+        ids: chunk.join(","),
+      });
+      (audio_features || [])
+        .filter(Boolean)
+        .forEach((af) => featureMap.set(af.id, af));
+    }
+    console.log(`[dna] Got audio features for ${featureMap.size} tracks`);
   } catch (err) {
     console.warn(
-      "Audio features blocked by Spotify (403) — using neutral DNA vector",
+      "[dna] Audio features blocked — falling back to genre/popularity model",
     );
-    return new Array(13).fill(0.5);
   }
-  const validAfs = afs.filter(Boolean);
-  if (!validAfs.length) {
-    console.warn("No audio features returned — using neutral DNA vector");
-    return new Array(13).fill(0.5);
+  if (featureMap.size > 0) {
+    const totalW = unique.reduce((s, { w }) => s + w, 0);
+    const sums = new Array(13).fill(0);
+    unique.forEach(({ t, w }) => {
+      const af = featureMap.get(t.id);
+      if (!af) return;
+      toVector(af).forEach((v, j) => {
+        sums[j] += v * w;
+      });
+    });
+    const vec = sums.map((s) => s / totalW);
+    return {
+      dnaVector: vec,
+      dnaSummary: buildDNASummary(vec),
+      hasAudioFeatures: true,
+    };
   }
   const totalW = unique.reduce((s, { w }) => s + w, 0);
   const sums = new Array(13).fill(0);
-  afs.forEach((af, i) => {
-    if (!af) return;
-    const vec = audioFeaturesToVector(af);
-    const w = unique[i]?.w || 1;
-    vec.forEach((v, j) => {
+  unique.forEach(({ t, w }) => {
+    const pop = (t.popularity || 50) / 100;
+    const dur = Math.min(
+      1,
+      Math.max(0, ((t.duration_ms || 210000) - 30000) / 570000),
+    );
+    const rough = [
+      pop * 0.8, // danceability ≈ popular songs tend to be danceable
+      pop * 0.7 + 0.15, // energy
+      0.5, // key (unknown)
+      0.6, // loudness
+      0.6, // mode (assume major)
+      0.1, // speechiness
+      0.3, // acousticness
+      0.05, // instrumentalness
+      0.15, // liveness
+      pop * 0.6 + 0.2, // valence ≈ popular songs tend positive
+      0.55, // tempo
+      dur, // duration
+      0.57, // time_signature (4/4)
+    ];
+    rough.forEach((v, j) => {
       sums[j] += v * w;
     });
   });
-  return sums.map((s) => s / totalW);
-}
-function interpretDNA(vec) {
-  const [
-    dance,
-    energy,
-    ,
-    ,
-    ,
-    speech,
-    acoustic,
-    instrumental,
-    live,
-    valence,
-    tempo,
-  ] = vec;
+  const vec = sums.map((s) => s / totalW);
   return {
-    danceability:
-      dance > 0.6
-        ? "highly danceable"
-        : dance > 0.4
-          ? "moderately danceable"
-          : "not very danceable",
-    energy:
-      energy > 0.6
-        ? "high energy"
-        : energy > 0.4
-          ? "moderate energy"
-          : "calm / low energy",
-    valence:
-      valence > 0.6
-        ? "happy and positive"
-        : valence > 0.4
-          ? "mixed tone"
-          : "melancholic or dark",
-    tempo: tempo > 0.6 ? "fast-paced" : tempo > 0.4 ? "mid-tempo" : "slow",
-    acousticness:
-      acoustic > 0.6
-        ? "very acoustic"
-        : acoustic > 0.4
-          ? "somewhat acoustic"
-          : "electronic/produced",
-    instrumentalness:
-      instrumental > 0.5 ? "mostly instrumental" : "vocal-forward",
-    speechiness: speech > 0.5 ? "rap/spoken word" : "sung vocals",
-    liveness: live > 0.7 ? "live recordings" : "studio recordings",
+    dnaVector: vec,
+    dnaSummary: buildDNASummary(vec),
+    hasAudioFeatures: false,
   };
 }
-async function findSimilarTracks(
-  dnaVector,
-  { limit = 20, excludeIds = [], featureFilters = {} } = {},
-) {
+async function findSimilar(dnaVector, { limit = 20, excludeIds = [] } = {}) {
   const query = {};
-  const tracksWithVectors = await Track.countDocuments({
+  if (excludeIds.length) query._id = { $nin: excludeIds };
+  const hasVectors = await Track.countDocuments({
     featureVector: { $exists: true, $not: { $size: 0 } },
   });
-  if (tracksWithVectors > 0) {
+  if (hasVectors > 0) {
     query.featureVector = { $exists: true, $not: { $size: 0 } };
-  }
-  if (excludeIds.length) query._id = { $nin: excludeIds };
-  for (const [f, [mn, mx]] of Object.entries(featureFilters)) {
-    query[`audioFeatures.${f}`] = { $gte: mn, $lte: mx };
   }
   const candidates = await Track.find(query).limit(10000).lean();
   if (!candidates.length) return [];
-  if (tracksWithVectors > 0) {
+  if (hasVectors > 0) {
     return candidates
-      .map((t) => ({
-        track: t,
-        similarityScore: cosineSimilarity(dnaVector, t.featureVector),
-      }))
-      .filter(
-        ({ similarityScore }) => !isNaN(similarityScore) && similarityScore > 0,
-      )
-      .sort((a, b) => b.similarityScore - a.similarityScore)
+      .map((t) => ({ track: t, score: cosine(dnaVector, t.featureVector) }))
+      .filter(({ score }) => score > 0 && !isNaN(score))
+      .sort((a, b) => b.score - a.score)
       .slice(0, limit);
-  } else {
-    return candidates
-      .sort(() => Math.random() - 0.5)
-      .slice(0, limit)
-      .map((track) => ({ track, similarityScore: 0.5 }));
   }
+  return candidates
+    .sort((a, b) => (b.popularity || 0) - (a.popularity || 0))
+    .slice(0, limit)
+    .map((track) => ({ track, score: 0.5 }));
 }
 function buildChartData(vec) {
   return [
@@ -274,88 +286,42 @@ function buildChartData(vec) {
     { axis: "Liveness", value: vec[8] },
   ];
 }
-async function claudeMessage(prompt, maxTokens = 300) {
-  const msg = await anthropic.messages.create({
-    model: 'claude-3-5-sonnet-20241022',
-    max_tokens: maxTokens,
-    messages: [{ role: "user", content: prompt }],
-  });
-  return msg.content[0].text.trim();
-}
-async function generateDNASummary(interpretation, displayName) {
-  const traits = Object.entries(interpretation)
-    .map(([k, v]) => `${k}: ${v}`)
-    .join("\n");
-  return claudeMessage(
-    `You are DJ Dou, a music personality analyst. Based on the audio DNA below, write a 2–3 sentence description of ${displayName || "this listener"}'s musical identity. Make it personal and poetic — like a horoscope for music taste. Don't list stats; synthesize them into a vivid portrait.\n\nAudio DNA:\n${traits}\n\nWrite only the description, nothing else.`,
-    300,
-  );
-}
-async function generateWhyText(track, score) {
-  return claudeMessage(
-    `Write one punchy sentence (max 20 words) explaining why a user would love "${track.title}" by ${track.artist}. It's a ${Math.round(score * 100)}% DNA match. Be specific about vibe or emotion.`,
-    80,
-  );
-}
-async function parseMoodQuery(query) {
-  const raw = await claudeMessage(
-    `Convert this mood into Spotify audio feature ranges. Respond ONLY with valid JSON — no preamble, no backticks.\nFeatures (all 0–1): danceability, energy, valence, tempo, acousticness, instrumentalness, speechiness\nEach key maps to [min, max].\n\nMood: "${query}"\n\nExample: {"valence":[0,0.3],"energy":[0,0.4]}`,
-    150,
-  );
-  try {
-    const parsed = JSON.parse(raw);
-    const valid = {};
-    for (const [k, v] of Object.entries(parsed)) {
-      if (Array.isArray(v) && v.length === 2 && typeof v[0] === "number") {
-        valid[k] = [Math.max(0, v[0]), Math.min(1, v[1])];
-      }
-    }
-    return valid;
-  } catch {
-    return {};
-  }
-}
 async function upsertTrack(spotifyTrack, audioFeatures) {
   const formatted = formatTrack(spotifyTrack);
-  return Track.findOneAndUpdate(
-    { spotifyId: formatted.spotifyId },
-    {
-      ...formatted,
-      audioFeatures: {
-        danceability: audioFeatures.danceability,
-        energy: audioFeatures.energy,
-        key: audioFeatures.key,
-        loudness: audioFeatures.loudness,
-        mode: audioFeatures.mode,
-        speechiness: audioFeatures.speechiness,
-        acousticness: audioFeatures.acousticness,
-        instrumentalness: audioFeatures.instrumentalness,
-        liveness: audioFeatures.liveness,
-        valence: audioFeatures.valence,
-        tempo: audioFeatures.tempo,
-        duration_ms: audioFeatures.duration_ms,
-        time_signature: audioFeatures.time_signature,
-      },
-      featureVector: audioFeaturesToVector(audioFeatures),
-      cachedAt: new Date(),
-    },
-    { upsert: true, new: true },
-  );
+  const update = { ...formatted, cachedAt: new Date() };
+  if (audioFeatures) {
+    update.audioFeatures = {
+      danceability: audioFeatures.danceability,
+      energy: audioFeatures.energy,
+      key: audioFeatures.key,
+      loudness: audioFeatures.loudness,
+      mode: audioFeatures.mode,
+      speechiness: audioFeatures.speechiness,
+      acousticness: audioFeatures.acousticness,
+      instrumentalness: audioFeatures.instrumentalness,
+      liveness: audioFeatures.liveness,
+      valence: audioFeatures.valence,
+      tempo: audioFeatures.tempo,
+      duration_ms: audioFeatures.duration_ms,
+      time_signature: audioFeatures.time_signature,
+    };
+    update.featureVector = toVector(audioFeatures);
+  }
+  return Track.findOneAndUpdate({ spotifyId: formatted.spotifyId }, update, {
+    upsert: true,
+    new: true,
+  });
 }
 module.exports = {
   getAuthUrl,
   exchangeCode,
-  getSpotifyClient,
+  getClient,
   spotifyGet,
-  getAudioFeatures,
   formatTrack,
-  computeDNAVector,
-  interpretDNA,
-  findSimilarTracks,
+  computeDNA,
+  findSimilar,
   buildChartData,
-  generateDNASummary,
-  generateWhyText,
-  parseMoodQuery,
   upsertTrack,
-  cosineSimilarity,
+  toVector,
+  cosine,
 };

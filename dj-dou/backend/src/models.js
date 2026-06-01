@@ -3,19 +3,18 @@ const { Schema } = mongoose;
 const userSchema = new Schema(
   {
     spotifyId: { type: String, required: true, unique: true, index: true },
-    email: { type: String, required: true },
+    email: String,
     displayName: String,
     avatar: String,
     spotifyAccessToken: String,
     spotifyRefreshToken: String,
     tokenExpiresAt: Date,
     dnaVector: { type: [Number], default: [] },
-    dnaSummary: { type: String, default: "" },
     dnaComputedAt: Date,
+    dnaSummary: { type: String, default: "" },
   },
   { timestamps: true },
 );
-
 const trackSchema = new Schema(
   {
     spotifyId: { type: String, required: true, unique: true, index: true },
@@ -46,17 +45,6 @@ const trackSchema = new Schema(
   { timestamps: true },
 );
 trackSchema.index({ popularity: -1 });
-const seedSchema = new Schema({
-  userId: {
-    type: Schema.Types.ObjectId,
-    ref: "User",
-    required: true,
-    index: true,
-  },
-  trackId: { type: Schema.Types.ObjectId, ref: "Track", required: true },
-  addedAt: { type: Date, default: Date.now },
-});
-seedSchema.index({ userId: 1, trackId: 1 }, { unique: true });
 const interactionSchema = new Schema({
   userId: {
     type: Schema.Types.ObjectId,
@@ -78,8 +66,6 @@ const recommendationSchema = new Schema({
   },
   trackId: { type: Schema.Types.ObjectId, ref: "Track", required: true },
   similarityScore: { type: Number, required: true },
-  whyText: { type: String, default: "" },
-  moodQuery: { type: String, default: "" },
   createdAt: { type: Date, default: Date.now, expires: 86400 },
 });
 recommendationSchema.index({ userId: 1, similarityScore: -1 });
@@ -101,7 +87,6 @@ const FEATURE_ORDER = [
 module.exports = {
   User: mongoose.model("User", userSchema),
   Track: mongoose.model("Track", trackSchema),
-  Seed: mongoose.model("Seed", seedSchema),
   Interaction: mongoose.model("Interaction", interactionSchema),
   Recommendation: mongoose.model("Recommendation", recommendationSchema),
   FEATURE_ORDER,
